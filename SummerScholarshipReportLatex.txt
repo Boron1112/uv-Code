@@ -1,0 +1,139 @@
+\documentclass{article}\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{esvect}
+\usepackage{graphicx}
+
+\title{Summer Scholarship Report}
+
+\begin{document}
+
+\section{Introduction}
+\section{Calculating the UV track}
+To calculate the UV track on the sky, we must first note the coordinates of the baselines of the telescope in question. The displacement between the antennas is usually given in East-North-Up (ENU) coordinates. While these work it is often far simpler for the coordinates to be independent of the earth's latitude. Thus we instead use an xyz coordinate system that is independent of the earths latitude.\\
+This works by having the z-axis parallel to the north-celestial pole and therefore x is perpendicular to the equator for all latitude. The y axis points to the east. Therefore the relationship can be drawn by:\\
+
+$$\left(
+\begin{array}{c}
+x&y&z
+\end{array}
+\right)=
+\left(\begin{array}{ccc}
+0&-\sin(L)&\cos(L)
+&1&0&0
+&0&\cos(L)&\sin(L)
+\end{array}
+\right)
+\left(
+\begin{array}{c}
+E&N&U
+\end{array}
+\right)
+$$
+Where L is the latitude of the centre of the array.\\
+We now wish to convert this to the uvw coordinates, which results in the uv - track. We first note that each pair of arrays makes a baseline, $n$ antenna will have $n(n-1)/2$ baselines. A baseline can be written as:
+$$
+\textbf{B} =
+\left( \begin{array}{c} x_2-x_1&y_2-y_1&z_2-z_1 \end{array} \right)
+$$
+From this we can calculate the uvw coordinates using:\\
+$$
+\left( \begin{array}{c} u&v&w \end{array} \right) =
+\dfrac{1}{\lambda}
+\left( \begin{array}{ccc}
+\sin(h)&\cos(h)&0
+&-\sin(\delta)\cos(h)&\sin(\delta)\sin(h)&\cos(\delta)
+&\cos(\delta)\cos(h)&-\cos(\delta)\sin(h)&\sin(\delta)
+\end{array} \right)
+\left( \begin{array}{c}
+B_x&B_y&B_z
+\end{array} \right)
+$$
+Where $\lambda$ is the wavelength, h is the hour angle and 
+Finally combining these two equations gives us:
+$$
+\left( \begin{array}{c} u&v&w \end{array} \right)
+$$
+$$=
+\dfrac{1}{\lambda}
+\left( \begin{array}{ccc}
+\cos(h)&-\sin(h)\sin(L)&\sin(h)\cos(L)
+&\sin(\delta)\sin(h)&\sin(\delta)\cos(h)\sin(L)+\cos(L)\cos(\delta)&-\sin(\delta)\cos(h)\cos(L)+\cos(\delta)\sin(L)
+&-\cos(\delta)\sin(h)&-\cos(\delta)\cos(h)\sin(L)+\sin(\delta)\cos(L)&\cos(\delta)\cos(h)\cos(L)+\sin(L)\sin(\delta)
+\end{array} \right)
+$$
+$$
+\left( \begin{array}{c}
+\Delta E&\Delta N&\Delta U
+\end{array} \right)
+$$
+The uvw coordinates can be found by noting w points towards the object, while u remain in the xy plane while pointing in the y direction for an object directly above and in the x direction for h = 6. From this we can note standard coordinate conventions to find v for any system.\\[0.025in]
+
+If we assume that the object is distant enough that it approximates a 2d plane on the sky (i.e. small angles) then we can treat $w \approx 0$. This assumption allows the uv track to be mapped on a 2D plane.\\
+When considering the point of that the object is at it's highest (that is the hour angle is 0). The configuration of the National Radio Astronomy Observatory's (NRAO) Very Large Array (VLA) results with:\\[0.025in]
+(When we have our final image of the configuration, insert it here.[It's the first one Cormac sent you.])\\[0.025in]
+
+Information about the telescope and object this uv track is relevant to is found in appendix 1.\\[0.025in]
+
+After acquiring the snap shot of the plot, it can then be tracked on a timed sample. This requires a sample of multiple hour angles to be plotted together in the same plot. Ideally this should be centred such that the hour angle is 0, thus the object is as high in the sky as possible. For a 1 hour track with a sample taken every minute centred on the zero hour angle we get:\\[0.025in]
+
+(Now put the image of the sampling image.)\\[0.025in]
+\section{The Fourier Transform}
+Once we have the uv-coverage, we must apply it to the image. This first requires us to perform a Fourier transform on an image such as the one given below:\\[0.1in]
+
+Here put formula's on a Fourier transformation, perhaps an example\\[0.1in]
+
+After this we multiply the transformed image we then multiply the result by the uv-coverage. That is, any point that is on the track of the coverage in the image is multiplied by 1 and remains as is. Any other point is multiplied by 0 and thus; vanishes. When the image is inverse transformed back to it's original state (an inverse Fourier transform) it will now appear as it is seen by the imported array configuration.\\
+The basis behind the Fourier transform is to move the high definition part of the image into the centre, while moving the low definition part to the edges. This is done by summing up an infinite number of Fourier series. Fourier series when they are finite are used to describe any periodic function in terms a sum of sine functions. When taken to infinity in the complex plane, it can describe any image, thus resulting in a Fourier transformation.\\[0.1in]
+Before multiplying the mask and the Fourier transformed object, it is important to make sure the two are scaled correctly with one another. This is somewhat tricky to do since the uv coverage is in units of length (m or number of wavelengths) while the image is often in units of angles (degrees, arcminutes or arcseconds). The resolutions of the image however is found using the spacial frequency, which relates to the fringe spacing in an inverse relation and from the number of points such that the following relationship is met: 
+$$\Delta\theta = \dfrac{1}{N\Delta s}$$
+Where $\Delta s$ is the size of the pixels in wavelengths and $N$ is the number of points on the uv track.\\
+After this the map must be imprinted on a blank canvas which is the same size as the Fourier transformed image.
+\section{Interface}
+
+Once opening the program you will be greeted with the following screen:\\
+\includegraphics[scale = 0.3]{TitleScreen.png}\\
+The listbox on the left is used to select existing array configurations. Once selected, the desired configuration will then be displayed on the graph beside it. As shown below:\\
+\includegraphics[scale = 0.8]{ArraySelect.png}\\
+Once this is selected you must then set the parameters for which the uv track operates, this is done with the central section of the screen:\\
+\includegraphics[scale = 1]{ParameterSelect.png}\\
+As can be seen, the frequency is in MHz, the sample frequency is the number per minute, and declination is in degrees. Modifying these three values will affect all uv tracks added to the configuration, even if already selection. The Hour Angle however is specific to each track, make sure it is set before adding the selected array is added to the configuration, this can be done either by setting the sliders or typing the maximum and minimum in directly in the boxes below.\\
+Once the parameters are correct, select the array configuration on the left list you wish to add, then press the 'Add Selected' button to add it to your chosen Array Configurations.\\
+Once chosen, it is added to the list of selected arrays:\\
+\includegraphics[scale = 1]{UVSelect.png}\\
+Once there, it's uv track will be induvidually coloured and displayed to the left.\\
+Once these have been selected you can switch to the 'Output' tab. Which is displayed like this:\\
+\includegraphics[scale = 0.3]{OutputTab.png}\\
+First we draw attention to the top left of the screen:\\
+\includegraphics[scale = 1]{LoadPart.png}\\
+The load button is then used to load an image file, which is then displayed in the reference image plane. You must also set the correct pixel scale for the image, so the uv track can be scaled correctly.\\
+Once this is done, press the 'Run' button and the code will output the fourier transform of the image, the scaled uv-coverage mask, the synthesised beam, the observed fft and the final observed image.\\
+\includegraphics[scale = 0.5]{End.png}\\
+And we're done.
+
+\section{Appendix 1}
+Configuration of the very large array in New Mexico:\\
+Array Position(Long, Lat) = (107.6184 deg West, 34.0784 deg North)\\
+Antenna Coordinates ($r,\phi$) ($\phi = 0$ is north, $\phi = 90$ is west. $r$ is expressed in km, $\phi$ in degrees):
+$$
+\left(
+\begin{array}{ccc}
+(0.4364,5.0)&(1.4337,5.0)&(2.8747,5.0)
+&(4.7095,5.0)&(6.9065,5.0)&(9.4434,5.0)
+&(12.3027,5.0)&(15.4706,5.0)&(18.9357,5.0)
+&(0.4840,125.0)&(1.5899,125.0)&(3.1881,125.0)
+&(5.2229,125.0)&(7.6595,125.0)&(10.4728,125.0)
+&(13.6438,125.0)&(17.157,125.0)&(21.,125.0)
+&(0.484,245.0)&(1.5899,245.0)&(3.1881,245.0)
+&(5.2229,245.0)&(7.6595,245.0)&(10.4728,245.0)
+&(13.6439,245.0)&(17.1572,245.0)&(21.,245.0)
+\end{array}
+\right)
+$$
+The observation was made with the following parameters:\\
+(R.A., Dec) = (09h11m27.7s, 05d50m54s)\\
+Wavelength = 0.001 m\\
+Sampling rate: 1 sample every 60s\\
+Sample time: 1 hour\\
+
+\end{document}

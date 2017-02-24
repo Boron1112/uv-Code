@@ -1,7 +1,7 @@
 
 # coding: utf-8
 
-# In[1]:
+# In[139]:
 
 #Load nessassary modules
 import numpy as np
@@ -25,7 +25,124 @@ from os import path
 get_ipython().magic('matplotlib inline')
 
 
-# In[2]:
+# In[140]:
+
+#The mathematical functions nessassary to find the uv track from the array parameters
+class interferometer:
+    
+    #Convert single point coordinates into ENU
+    def ENU(coords):
+        arrayInQuestion = list(np.zeros([len(coords[0]),3]))
+        arrayInQuestion2 = list(np.zeros([len(arrayInQuestion[0]),len(arrayInQuestion)]))
+        for i in np.arange(len(coords)):
+            E = -coords[i][0]*np.cos(coords[i][1])*np.sin(coords[i][2])
+            N = coords[i][0]*np.cos(coords[i][1])*np.cos(coords[i][2])
+            U = coords[i][0]*np.sin(coords[i][1])
+            
+            arrayInQuestion[i] = [E,N,U]
+            arrayInQuestion2[i] = arrayInQuestion[:][i]
+        return arrayInQuestion2
+    
+    #Convert ENU to xyz, where L is the latitude
+    def ENUtoUVW(coords1,coords2,L,lam,delta,h):
+        Bx = coords2[0]-coords1[0]
+        By = coords2[1]-coords1[1]
+        Bz = coords2[2]-coords1[2]
+        u = (np.sin(h)*(-np.sin(L)*By+np.cos(L)*Bz)+np.cos(h)*(Bx))/(lam*1000)
+        v = (-np.sin(delta)*np.cos(h)*(-np.sin(L)*By+np.cos(L)*Bz)+np.sin(delta)*np.sin(h)*(Bx)+np.cos(delta)*np.cos(L)*By+np.sin(L)*Bz)/(lam*1000)
+        w = (np.cos(delta)*np.cos(h)*(-np.sin(L)*By+np.cos(L)*Bz)-np.cos(delta)*np.sin(h)*(Bx)+np.sin(delta)*np.cos(L)*By+np.sin(L)*Bz)/(lam*1000)
+        return np.array([u,v,w])
+
+    #Calculates the hour vector of the track based on the hour angles and sample rate
+    def timetrackHours(hCen,hStep,hSteps):
+        return np.linspace(hCen-hStep*hSteps/2,hCen+hStep*hSteps/2,hSteps+1)
+    
+    #Find uv track over time, L is lattitude, delta is declination, hArray are all the hour angle values
+    def timetrack(coords,L,lam,delta,hArray): #H is taken as an array
+        uvFu = np.array([])
+        uvFv = np.array([])
+        uvRu = np.array([])
+        uvRv = np.array([])
+        uvFu = np.array(list(interferometer.uvTrack(coords,L,lam,delta,hArray)[:,0,:]))
+        uvFv = np.array(list(interferometer.uvTrack(coords,L,lam,delta,hArray)[:,1,:])) 
+        for i in np.arange(len(hArray)):
+            uvRu = np.array(list(uvRu)+list(uvFu[:,i]))
+            uvRv = np.array(list(uvRv)+list(uvFv[:,i]))
+        return np.array([uvRu,uvRv])
+    
+    #Create all the baseline uv vectors, L is latitude, lam is wavelength, delta is declination, h is hour angle (h is an array)
+    def uvTrack(coords,L,lam,delta,h):
+        uv = np.zeros([len(coords[1])*(len(coords[1])-1),3,len(h)])
+        k = 0
+        for i in np.arange(len(coords[1])):
+            for j in np.arange(len(coords[1])-1-i):
+                halfTrack = interferometer.ENUtoUVW(np.array([coords[0][i],coords[1][i],coords[2][i]]),np.array([coords[0][i+j+1],coords[1][i+j+1],coords[2][i+j+1]]),L,lam,delta,h)
+                uv[k] = halfTrack
+                uv[k+1] = -halfTrack
+                k = k+2
+        return np.array(uv)
+    
+    #Scale the UV track to the Fourier transformed image, uv cover is the track to be scaled, res is the pixel scale in arcseconds and image is the image to scale too (so the total size is known)
+    def ScaleUVTrack(uvCover,Res,image):
+        resRad = np.radians(Res/(60.*60.))
+        #sizeAng = (resRad)*np.array([image.size[0],image.size[1]])
+        inversedSizeAng = 2./resRad
+        pixSize = np.array([inversedSizeAng/len(np.fft.fft2(image)),inversedSizeAng/len(np.fft.fft2(image)[0])])
+        return 1000.*np.array([uvCover[0]/pixSize[0],uvCover[1]/pixSize[1]])
+    
+    #Take the created UV track, then make the mask scaled to the pixel size for the image, ima is the image used (to determine the size of the track), uv track is the track to create mask from, res is the pixel scale in arcseconds 
+    def makeMask(ima,uvCover,Res):
+    
+        #set up uv track for use in mask
+        finWid = len(np.fft.fft2(ima))
+        finLen = len(np.fft.fft2(ima)[0])
+        sampleUsed = interferometer.ScaleUVTrack(uvCover,Res,ima)
+        sampleUsed2 = np.zeros([len(sampleUsed[0]),len(sampleUsed)])
+        for i in np.arange(len(sampleUsed[0])):
+            sampleUsed2[i] = sampleUsed[:,i]
+            sampleUsed2[i,1] = -sampleUsed2[i,1]
+    
+        #create black image to imprint uv track on
+        track = PIL.Image.new('RGB', (finLen,finWid), 'black')
+        mask = ImageDraw.Draw(track)
+        coord = sampleUsed2
+        pointSize = 1
+        Coord = np.arange(50)-25
+        Coord2 = np.zeros([len(Coord)**2,2])
+        m = 0
+        
+        #place a white point at the points of the mask corrisponding to the points of the uv track
+        for i in np.arange(len(Coord)):
+            for j in np.arange(len(Coord)):
+                Coord2[m,0] = Coord[i]
+                Coord2[m,1] = Coord[j]
+                m+=1
+        for (x,y) in coord:
+            mask.rectangle([x+finLen/2,y+finWid/2,x+finLen/2+pointSize-1,y+finWid/2+pointSize-1], fill = 'white')
+        #mask.rectangle([0,0,1000,1000], fill = 'white') #Use this for a full image
+        return track
+    
+    def observedFFT(img,uvTrack):
+        imUsed = np.fft.fftshift(np.fft.fft2(img))
+        trackF = np.zeros([uvTrack.size[1],uvTrack.size[0]])
+        trackF = imUsed*np.asarray(uvTrack)[:,:]/255
+        return trackF
+    
+    def synthesisedBeam(ima,uvCover,Res):
+        #this function find's the synthesised beam on an image from a given set of uv coordinates
+        #it is not used in the orignal tk interface since the uvtrack was already found, and it would be a waste of time to find again
+        #however it is avaliable if need
+        track = interferometer.makeMask(ima,uvCover,Res)
+        return abs(np.fft.fftshift(np.fft.ifft2(track.convert('L'))))
+    
+    def observedImage(img, uvCover, Res):
+        #once again, not used in the orignal code for time saving reasons, but avaliabe if other steps are not taken
+        track = interferometer.makeMask(img,uvCover,Res).convert('1')
+        trackAndFFT =interferometer.observedFFT(img,track)
+        return np.fft.ifft2(np.fft.ifftshift(trackAndFFT))
+
+
+# In[141]:
 
 #This class defines the frames used to display the nessassary images in the output section of the code
 class ImageFrame:
@@ -97,7 +214,7 @@ class ImageFrame:
         self.can.create_image(self.PosX,self.PosY,image=self.imShowReady)
 
 
-# In[3]:
+# In[142]:
 
 #This wiget allows you select an array to be added to the configurations
 class ArraySelecter:
@@ -115,7 +232,7 @@ class ArraySelecter:
         #The next IF statements are to insert said names and array configurations
         if (configurationsPOLAR != []):
             self.configurationsNames = self.configurationsNames+configurationsPOLAR[0]
-            self.configurationsCoords = self.configurationsCoords+self.ENU(configurationsPOLAR[1])
+            self.configurationsCoords = self.configurationsCoords+interferometer.ENU(configurationsPOLAR[1])
             self.configurationsLat = self.configurationsLat+configurationsPOLAR[2]
         if (configurationsENU != []):
             self.configurationsNames = self.configurationsNames+configurationsENU[0]
@@ -154,19 +271,6 @@ class ArraySelecter:
         
         #Establish the change in the displayed array when the left mouse is released
         self.configList.bind('<ButtonRelease - 1>', self.ChooseArray)
-        
-    #Convert single point coordinates into ENU
-    def ENU(self,coords):
-        arrayInQuestion = list(np.zeros([len(coords[0]),3]))
-        arrayInQuestion2 = list(np.zeros([len(arrayInQuestion[0]),len(arrayInQuestion)]))
-        for i in np.arange(len(coords)):
-            E = -coords[i][0]*np.cos(coords[i][1])*np.sin(coords[i][2])
-            N = coords[i][0]*np.cos(coords[i][1])*np.cos(coords[i][2])
-            U = coords[i][0]*np.sin(coords[i][1])
-            
-            arrayInQuestion[i] = [E,N,U]
-            arrayInQuestion2[i] = arrayInQuestion[:][i]
-        return arrayInQuestion2
     
     #replots the displayed array
     def ChooseArray(self,event):
@@ -180,22 +284,23 @@ class ArraySelecter:
         plt.plot(self.Ea/1000,self.No/1000,'o',markersize=1)
         
         self.arrayDisplay = FigureCanvasTkAgg(self.arrDisFig,master = self.frame)
-
+        
+        self.plotDisplay.grid_forget()
         self.plotDisplay = self.arrayDisplay.get_tk_widget()
         self.plotDisplay.grid(column=2,row=1,rowspan=10)
 
 
-# In[4]:
+# In[143]:
 
 #This widget handles the directly imported parameters (sample frequency, light frequency and declination), all off these are done via direct entry
 class Parameters:
     
-    def __init__(self, parent, frequency=0, sampleFrequency=0, declination=0):
+    def __init__(self, parent, frequency=0, sampleTime=0, declination=0):
         self.parent = parent #Set the parent
         self.freq = StringVar() #Variable for the parent
         self.freq.set(frequency) #Initialize
-        self.sampleFreq = StringVar() #Variable for the sample rate
-        self.sampleFreq.set(sampleFrequency)
+        self.sampleTime = StringVar() #Variable for the sample rate in seconds
+        self.sampleTime.set(sampleTime)
         self.dec = StringVar() #Variable for the declination
         self.dec.set(declination)
         
@@ -205,16 +310,16 @@ class Parameters:
         
         #Labels the variables
         ttk.Label(self.frame,text='Frequency (MHz):').grid(column=1,row=2)
-        ttk.Label(self.frame,text='Samples Frequence (/min):').grid(column=1,row=3)
+        ttk.Label(self.frame,text='Sample time(sec):').grid(column=1,row=3)
         ttk.Label(self.frame,text='Declination (deg):').grid(column=1,row=4)
         
         #Allow modification of the variables
         ttk.Entry(self.frame,textvariable= self.freq).grid(column=2,row=2)
-        ttk.Entry(self.frame,textvariable=self.sampleFreq).grid(column=2,row=3)
+        ttk.Entry(self.frame,textvariable=self.sampleTime).grid(column=2,row=3)
         ttk.Entry(self.frame,textvariable=self.dec).grid(column=2,row=4)
 
 
-# In[5]:
+# In[144]:
 
 #This widget creates the hour angle slider and the ability to manipulate the values directly
 class HourSlider:
@@ -229,6 +334,7 @@ class HourSlider:
         self.minHoVal = 10 #Initialises the position of the sliders
         self.maxHoVal = self.length+10 
         self.hourMove = 0 #sets the current mode of the slider (not clicked on)
+        self.hourMinPrediction = False #determines wheather clicking on the hour bar will guess
         
         self.frame = Frame(self.parent)
         
@@ -258,7 +364,7 @@ class HourSlider:
 
         #Events to the slider
         self.hourCanvas.bind('<1>', lambda e: self.GrabHourSlide(e))
-        self.hourCanvas.bind('<ButtonRelease - 1>',lambda e: self.ReleaseHour(e))
+        self.hourCanvas.bind('<ButtonRelease - 1>',lambda e: self.ReleaseHour)
         self.hourCanvas.bind('<B1-Motion>', lambda e: self.Slide(e))
         
     #Used to set the hour angle directly, this activates when the mouse moves into the slider canvas
@@ -277,7 +383,7 @@ class HourSlider:
             self.hourCanvas.create_rectangle(self.maxHoVal-5,10,self.maxHoVal+5,40,fill='white',outline='black')
 
             self.hourCanvas.bind('<1>', lambda e: self.GrabHourSlide(e))
-            self.hourCanvas.bind('<ButtonRelease - 1>',lambda e: self.ReleaseHour(e))
+            self.hourCanvas.bind('<ButtonRelease - 1>',lambda e: self.ReleaseHour)
             self.hourCanvas.bind('<B1-Motion>', lambda e: self.Slide(e))
         else:
             self.minHour.set(-12)
@@ -318,7 +424,7 @@ class HourSlider:
             self.hourCanvas.create_rectangle(self.maxHoVal-5,10,self.maxHoVal+5,40,fill='white',outline='black')
 
             self.hourCanvas.bind('<1>', lambda e: self.GrabHourSlide(e))
-            self.hourCanvas.bind('<ButtonRelease - 1>',lambda e: self.ReleaseHour(e))
+            self.hourCanvas.bind('<ButtonRelease - 1>',lambda e: self.ReleaseHour)
             self.hourCanvas.bind('<B1-Motion>', lambda e: self.Slide(e))
     
     #release the hour slider when the mouse is released
@@ -329,14 +435,23 @@ class HourSlider:
     def GrabHourSlide(self,e):
         if ((e.x < self.minHoVal+5) and (e.x > self.minHoVal-5)):
             self.hourMove = 1
+            self.hourMinPrediction = True
         else:
             if ((e.x < self.maxHoVal+5) and (e.x > self.maxHoVal-5)):
                 self.hourMove = 2
+                self.hourMaxPrediction = False
             else:
-                self.hourMove = 0
+                if (self.hourMinPrediction == False):
+                    self.hourMove = 1
+                    self.Slide(e)
+                    self.hourMinPrediction = True
+                else:
+                    self.hourMove = 2
+                    self.Slide(e)
+                    self.hourMinPrediction = False
 
 
-# In[6]:
+# In[145]:
 
 class AddButton:
     #The button to add an array configuration to the selected configurations and display it's uv track
@@ -349,93 +464,18 @@ class AddButton:
         #The button
         self.add = ttk.Button(self.frame, text = self.text, command = self.AddSelected)
         self.add.grid(column=1,row=1, columnspan = 1, sticky = N)
-        self.lastFreq = 0
-        self.lastSampleFreq = 0
-        self.lastdec = 0
-    
-    #Calculates the hour vector of the track based on the hour angles and sample rate
-    def timetrackHours(self,hCen,hStep,hSteps):
-        return np.linspace(hCen-hStep*hSteps/2,hCen+hStep*hSteps/2,hSteps+1)
-    
-    #Find uv track over time, L is lattitude, delta is declination, hArray are all the hour angle values
-    def timetrack(self,coords,L,lam,delta,hArray): #H is taken as an array
-        uvFu = np.array([])
-        uvFv = np.array([])
-        uvRu = np.array([])
-        uvRv = np.array([])
-        uvFu = np.array(list(self.uvTrack(coords,L,lam,delta,hArray)[:,0,:]))
-        uvFv = np.array(list(self.uvTrack(coords,L,lam,delta,hArray)[:,1,:]))
-        #uvFu = np.array(list(uvFu)+list(self.uvTrack(coords,L,lam,delta,hArray)[:][0][:]))
-        #uvFv = np.array(list(uvFv)+list(self.uvTrack(coords,L,lam,delta,hArray)[:][1][:]))    
-        for i in np.arange(len(hArray)):
-            uvRu = np.array(list(uvRu)+list(uvFu[:,i]))
-            uvRv = np.array(list(uvRv)+list(uvFv[:,i]))
-        return np.array([uvRu,uvRv])
-    
-    #Convert ENU to xyz, where L is the latitude
-    def xyz(self,coords,L):
-        x = -np.sin(L)*coords[1]+np.cos(L)*coords[2]
-        y = coords[0]
-        z = np.cos(L)*coords[1]+np.sin(L)*coords[2]
-        return np.array([x,y,z])
-
-    #Convert xyz to uvw, where lam is the wavelength, delta is the declinations, h is hour angle (single number)
-    def uvw(self,coords1,coords2,lam,delta,h):
-        Bx = coords2[0]-coords1[0]
-        By = coords2[1]-coords1[1]
-        Bz = coords2[2]-coords1[2]
-        uR = np.sin(h)*Bx+np.cos(h)*By
-        vR = -np.sin(delta)*np.cos(h)*Bx+np.sin(delta)*np.sin(h)*By+np.cos(delta)*Bz
-        wR = np.cos(delta)*np.cos(h)*Bx-np.cos(delta)*np.sin(h)*By+np.sin(delta)*Bz
-        u = uR/(lam*1000)
-        v = vR/(lam*1000)
-        w = wR/(lam*1000)
-        return np.array([u,v,w])
-    
-    #skipit is just defined so that we can do the coordinate
-    def skipit(self,coords1,coords2,L,lam,delta,h):
-        return self.uvw(self.xyz(coords1,L),self.xyz(coords2,L),lam,delta,h)
-    
-    #Create all the baseline uv vectors, L is latitude, lam is wavelength, delta is declination, h is hour angle (h is an array)
-    def uvTrack(self, coords,L,lam,delta,h):
-        uv = np.zeros([len(coords[1])*(len(coords[1])-1),3,len(h)])
-        k = 0
-        for i in np.arange(len(coords[1])):
-            for j in np.arange(len(coords[1])-1-i):
-                uv[k] = self.skipit(np.array([coords[0][i],coords[1][i],coords[2][i]]),np.array([coords[0][i+j+1],coords[1][i+j+1],coords[2][i+j+1]]),L,lam,delta,h)
-                uv[k+1] = -self.skipit(np.array([coords[0][i],coords[1][i],coords[2][i]]),np.array([coords[0][i+j+1],coords[1][i+j+1],coords[2][i+j+1]]),L,lam,delta,h)
-                k = k+2
-        return np.array(uv)
     
     #Add a selected array configuration to the arrays to use for the formulations
     def AddSelected(self):
         #add array name to box with the used arrays on it
         uvDisplay.originalIndex.append(arrayBox.configList.curselection()[0])
         uvDisplay.usedArrays.insert(END, arrayBox.configurations[0][arrayBox.configList.curselection()[0]] + ':      ' + "%.2f" %float(hourSlide.minHour.get()) + '-' + "%.2f" %float(hourSlide.maxHour.get()))
-        if (((self.lastFreq == float(params.freq.get())) and (self.lastSampleFreq == float(params.sampleFreq.get())) and (self.lastDec == float(params.dec.get()))) or (len(uvDisplay.arrays) == 0)):
-            self.hour = (float(hourSlide.minHour.get())/2.+float(hourSlide.maxHour.get())/2.)*np.pi/180
-            uvDisplay.relationHours.append(self.timetrackHours(self.hour,2.*0.99726958*np.pi/(24*60*float(params.sampleFreq.get())),(float(hourSlide.maxHour.get())-float(hourSlide.minHour.get()))*60*float(params.sampleFreq.get())/0.99726958))
-            uvDisplay.arrays.append(self.timetrack(arrayBox.configurations[1][arrayBox.configList.curselection()[0]],arrayBox.configurations[2][arrayBox.configList.curselection()[0]],299792458/(float(params.freq.get())*10**6),float(params.dec.get())*np.pi/180,uvDisplay.relationHours[len(uvDisplay.relationHours)-1]))
-            
-            #Replot the uv track with the new array added to it
-            uvDisplay.replot(len(uvDisplay.arrays)-1)
-            
-        else:
-            self.hour = (float(hourSlide.minHour.get())/2.+float(hourSlide.maxHour.get())/2.)*np.pi/180
-            uvDisplay.relationHours.append(self.timetrackHours(self.hour,2.*0.99726958*np.pi/(24*60*float(params.sampleFreq.get())),(float(hourSlide.maxHour.get())-float(hourSlide.minHour.get()))*60*float(params.sampleFreq.get())/0.99726958))
-            uvDisplay.arrays.append(self.timetrack(arrayBox.configurations[1][arrayBox.configList.curselection()[0]],arrayBox.configurations[2][arrayBox.configList.curselection()[0]],299792458/(float(params.freq.get())*10**6),float(params.dec.get())*np.pi/180,uvDisplay.relationHours[len(uvDisplay.relationHours)-1]))
-        
-            uvDisplay.uvDisFig = plt.figure(2)
-            plt.clf()
-            for i in np.arange(len(uvDisplay.arrays)):
-                uvDisplay.arrays[i] = self.timetrack(arrayBox.configurations[1][uvDisplay.originalIndex[i]],arrayBox.configurations[2][uvDisplay.originalIndex[i]],299792458/(float(params.freq.get())*10**6),float(params.dec.get())*np.pi/180,uvDisplay.relationHours[i])
-                uvDisplay.replot(i)
-        self.lastFreq = float(params.freq.get())
-        self.lastSampleFreq = float(params.sampleFreq.get())
-        self.lastDec = float(params.dec.get())
+        self.hour = (float(hourSlide.minHour.get())/2.+float(hourSlide.maxHour.get())/2.)*np.pi/180
+        uvDisplay.relationHours.append(interferometer.timetrackHours(self.hour,2.*0.99726958*np.pi/(24.*60.*60./float(params.sampleTime.get())),(float(hourSlide.maxHour.get())-float(hourSlide.minHour.get()))*60.*60./float(params.sampleTime.get())/0.99726958))
+        uvDisplay.arrays.append(interferometer.timetrack(arrayBox.configurations[1][arrayBox.configList.curselection()[0]],arrayBox.configurations[2][arrayBox.configList.curselection()[0]],299792458/(float(params.freq.get())*10**6),float(params.dec.get())*np.pi/180,uvDisplay.relationHours[len(uvDisplay.relationHours)-1]))
 
 
-# In[7]:
+# In[156]:
 
 #This wiget provides  a list of the arrays selected as part of the configurations, and also displays the uv track, as well as the remove button
 class SelectedDisplay:
@@ -447,6 +487,9 @@ class SelectedDisplay:
         self.arrays = configurations
         self.relationHours = []
         self.originalIndex = []
+        self.lastFreq = 0
+        self.lastSampleTime = 0
+        self.lastdec = 0
         
         self.frame = Frame(self.parent)
         
@@ -462,34 +505,28 @@ class SelectedDisplay:
         self.delete = ttk.Button(self.frame, text = "Delete Selected", command = self.DeleteSelected)
         self.delete.grid(column=1,row=5)
         
-        ttk.Label(frame, text="UV Display").grid(column=7, row=1, sticky=N)
-
-        rcParams['figure.figsize'] = 4, 4
-        self.uvDisFig = plt.figure(2)
-        self.U = np.array([])
-        self.V = np.array([])
-
-        self.uvDis = FigureCanvasTkAgg(self.uvDisFig,master = self.frame)
-
-        self.plotUVDis = self.uvDis.get_tk_widget()
-        self.plotUVDis.grid(column=2,row=1,rowspan=10)
+        self.delete = ttk.Button(self.frame, text = "Plot UV", command = self.plotUV)
+        self.delete.grid(column=1,row=6)
     
-    def replot(self,r):
+    def replot(self):
+        self.display = Toplevel(root)
+        self.display.wm_title("Window")
         self.uvDisFig = plt.figure(2)
-        self.U = self.arrays[r][0]
-        self.V = self.arrays[r][1]
-        plt.xlabel('U(km)')
-        plt.ylabel('V(km)')
-        plt.plot(self.U,self.V,'o',markersize=1)
+        plt.clf()
+        plt.xlabel('U(klam)')
+        plt.ylabel('V(klam)')
+        for i in np.arange(len(self.arrays)):
+            self.U = self.arrays[i][0]
+            self.V = self.arrays[i][1]
+            plt.plot(self.U,self.V,'o',markersize=0.1)
         
-        self.uvDis = FigureCanvasTkAgg(self.uvDisFig,master = self.frame)
+        self.uvDis = FigureCanvasTkAgg(self.uvDisFig,master = self.display)
     
         self.scrollerUV.grid_forget()
         self.scrollerUV = ttk.Scrollbar(self.frame, command = self.usedArrays.yview)
         self.scrollerUV.grid(column=1,row=2,rowspan=3,sticky=(E,N,S))
         self.usedArrays.configure(yscrollcommand=self.scrollerUV.set)
         self.plotUVDis = self.uvDis.get_tk_widget()
-        self.plotUVDis.grid(column=2,row=1,rowspan=10)
         
     #remove a selected array from the chosen configurations (so it will not be used in final calculations)
     def DeleteSelected(self):
@@ -502,11 +539,32 @@ class SelectedDisplay:
         self.uvDisFig = plt.figure(2)
         plt.clf()
         for i in np.arange(len(self.arrays)):
-            self.arrays[i] = add.timetrack(arrayBox.configurations[1][self.originalIndex[i]],arrayBox.configurations[2][self.originalIndex[i]],299792458/(float(params.freq.get())*10**6),float(params.dec.get())*np.pi/180,self.relationHours[i])
-            self.replot(i)
+            self.arrays[i] = interferometer.timetrack(arrayBox.configurations[1][self.originalIndex[i]],arrayBox.configurations[2][self.originalIndex[i]],299792458/(float(params.freq.get())*10**6),float(params.dec.get())*np.pi/180,self.relationHours[i])
+            self.replot()
+        self.plotUVDis.grid(column=2,row=1,rowspan=10,sticky=(N,E,W,S))
+        
+    def plotUV(self):
+        if (((self.lastFreq == float(params.freq.get())) and (self.lastSampleTime == float(params.sampleTime.get())) and (self.lastDec == float(params.dec.get()))) or (len(uvDisplay.arrays) == 0)):
+            #Replot the uv track with the new array added to it
+            uvDisplay.replot()
+            uvDisplay.plotUVDis.grid(column=2,row=1,rowspan=10)
+            
+        else:        
+            uvDisplay.uvDisFig = plt.figure(2)
+            plt.clf()
+            for i in np.arange(len(uvDisplay.arrays)):
+                uvDisplay.arrays[i] = interferometer.timetrack(arrayBox.configurations[1][uvDisplay.originalIndex[i]],arrayBox.configurations[2][uvDisplay.originalIndex[i]],299792458/(float(params.freq.get())*10**6),float(params.dec.get())*np.pi/180,uvDisplay.relationHours[i])
+            uvDisplay.replot()
+            uvDisplay.plotUVDis.grid(column=2,row=1,rowspan=10)
+        self.lastFreq = float(params.freq.get())
+        self.lastSampleTime = float(params.sampleTime.get())
+        self.lastDec = float(params.dec.get())
+        
+        plt.savefig('UVTRACK.png')
+        uvFrame.addImage(PIL.Image.open('UVTRACK.png'))
 
 
-# In[8]:
+# In[147]:
 
 class LoadButton:
     
@@ -542,7 +600,7 @@ class LoadButton:
         self.LoadingImage()
 
 
-# In[16]:
+# In[148]:
 
 class RunImages:
     
@@ -561,52 +619,11 @@ class RunImages:
         absoluteFFT = abs(step)
         logFFT = np.log(absoluteFFT+1)
         maxes = np.zeros(len(logFFT))
-        print(max(logFFT[0]))
         for i in np.arange(len(logFFT)):
             maxes[i] = max(logFFT[i])
         totMax = max(maxes)
         moddedFFT = logFFT*255/totMax
         return PIL.Image.fromarray(moddedFFT)
-    
-    #Scale the UV track to the Fourier transformed image, uv cover is the track to be scaled, res is the pixel scale in arcseconds and image is the image to scale too (so the total size is known)
-    def ScaleUVTrack(self,uvCover,Res,image):
-        resRad = np.radians(Res/(60.*60.))
-        #sizeAng = (resRad)*np.array([image.size[0],image.size[1]])
-        inversedSizeAng = 2./resRad
-        pixSize = np.array([inversedSizeAng/len(np.fft.fft2(image)),inversedSizeAng/len(np.fft.fft2(image)[0])])
-        return 1000.*np.array([uvCover[0]/pixSize[0],uvCover[1]/pixSize[1]])
-
-    #Take the created UV track, then make the mask scaled to the pixel size for the image, ima is the image used (to determine the size of the track), uv track is the track to create mask from, res is the pixel scale in arcseconds 
-    def makeMask(self,ima,uvCover,Res):
-    
-        #set up uv track for use in mask
-        finWid = len(np.fft.fft2(ima))
-        finLen = len(np.fft.fft2(ima)[0])
-        sampleUsed = self.ScaleUVTrack(uvCover,Res,ima)
-        sampleUsed2 = np.zeros([len(sampleUsed[0]),len(sampleUsed)])
-        for i in np.arange(len(sampleUsed[0])):
-            sampleUsed2[i] = sampleUsed[:,i]
-            sampleUsed2[i,1] = -sampleUsed2[i,1]
-    
-        #create black image to imprint uv track on
-        track = PIL.Image.new('RGB', (finLen,finWid), 'black')
-        mask = ImageDraw.Draw(track)
-        coord = sampleUsed2
-        pointSize = 1
-        Coord = np.arange(50)-25
-        Coord2 = np.zeros([len(Coord)**2,2])
-        m = 0
-    
-        #place a white point at the points of the mask corrisponding to the points of the uv track
-        for i in np.arange(len(Coord)):
-            for j in np.arange(len(Coord)):
-                Coord2[m,0] = Coord[i]
-                Coord2[m,1] = Coord[j]
-                m+=1
-        for (x,y) in coord:
-            mask.rectangle([x+finLen/2,y+finWid/2,x+finLen/2+pointSize-1,y+finWid/2+pointSize-1], fill = 'white')
-        #mask.rectangle([0,0,1000,1000], fill = 'white') #Use this for a full image
-        return track
     
     #This is the final calculation
     def FindEverything(self):
@@ -623,14 +640,11 @@ class RunImages:
                 totalTrack[0].append(uvDisplay.arrays[i][0,j])
                 totalTrack[1].append(uvDisplay.arrays[i][1,j])
         totalTrackArr = np.array([totalTrack[0],totalTrack[1]])
-        imCoverageProto = self.makeMask(im,totalTrackArr,float(load.pixScale.get())).convert('LA')
-        uvFrame.addImage(imCoverageProto)
+        imCoverageProto = interferometer.makeMask(im,totalTrackArr,float(load.pixScale.get())).convert('1')
+        #uvFrame.addImage(imCoverageProto)
     
         #Effective Beam
-        imUsed = np.fft.fftshift(np.fft.fft2(im))
-        trackF = np.zeros([imCoverageProto.size[1],imCoverageProto.size[0]])
-        trackF = imUsed*np.asarray(imCoverageProto)[:,:,0]/255
-        imAndTrack = trackF
+        imAndTrack = interferometer.observedFFT(im,imCoverageProto)
         abImAndTrack = np.log(abs(imAndTrack)+1)
         maxes = np.zeros(len(abImAndTrack))
         for i in np.arange(len(abImAndTrack)):
@@ -663,16 +677,13 @@ class RunImages:
         finFrame.addImage(finImage)
 
 
-# In[19]:
+# In[157]:
 
 #Final program run, there's quite a lot here
 
 #Initialize everything
 root = Tk()
 root.title("Well, let's see")
-lastFreq = 0
-lastSampleFreq = 0
-lastDec = 0
 
 #set up the master frame
 frameMaster = ttk.Frame(root, padding = '5 5 5 5')
@@ -731,11 +742,10 @@ add = AddButton(frame, text = "Add Selected")
 add.frame.grid(column=2,row=5)
 
 #Parameter setter
-params = Parameters(frame, frequency=1428.5714285714284, sampleFrequency=1, declination=0)
+params = Parameters(frame, frequency=1428.5714285714284, sampleTime=60, declination=20)
 params.frame.grid(column=2,row=2)
 
 #hour slider canvas
-
 hourSlide = HourSlider(frame,minHour=-12,maxHour=12, length = 250)
 hourSlide.frame.grid(column=2,row=3)
 
